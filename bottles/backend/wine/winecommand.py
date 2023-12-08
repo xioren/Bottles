@@ -169,7 +169,10 @@ class WineCommand:
         # env.remove("XDG_DATA_HOME")
 
         dll_overrides = []
-        gpu = GPUUtils().get_gpu()
+        # NOTE: check user override then fallback to auto selection.
+        gpu = params.user_selected_gpu:
+        if gpu == "default":
+            gpu = GPUUtils().get_gpu()
         is_nvidia = DisplayUtils.check_nvidia_device()
         ld = []
 
