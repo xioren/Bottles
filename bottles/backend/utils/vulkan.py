@@ -16,67 +16,114 @@
 #
 
 import os
-from glob import glob
 import shutil
-import subprocess
 import filecmp
+import subprocess
+
+from glob import glob
+from collections import defaultdict
+
+FALLBACK_VULKAN_DATA_DIRS = [
+    "/usr/local/etc",  # standard site-local location
+    "/usr/local/share",  # standard site-local location
+    "/etc",  # standard location
+    "/usr/share",  # standard location
+    "/usr/lib/x86_64-linux-gnu/GL",  # Flatpak GL extension
+    "/usr/lib/i386-linux-gnu/GL",  # Flatpak GL32 extension
+    "/opt/amdgpu-pro/etc"  # AMD GPU Pro - TkG
+]
 
 
 class VulkanUtils:
-    __vk_icd_dirs = [
-        "/usr/share/vulkan",
-        "/etc/vulkan",
-        "/usr/local/share/vulkan",
-        "/usr/local/etc/vulkan"
-    ]
-    if "FLATPAK_ID" in os.environ:
-        __vk_icd_dirs += [
-            "/usr/lib/x86_64-linux-gnu/GL/vulkan",
-            "/usr/lib/i386-linux-gnu/GL/vulkan",
-        ]
-
+    # NOTE: borrows heavily from https://github.com/lutris/lutris/blob/master/lutris/util/system.py
     def __init__(self):
         self.loaders = self.__get_vk_icd_loaders()
 
+    def __get_vk_icd_files(self):
+        all_icd_search_paths = []
+        
+        def add_icd_search_path(paths):
+            if paths:
+                # unixy env vars with multiple paths are : delimited
+                for path in paths.split(":"):
+                    path = os.path.join(path, "vulkan")
+                    if os.path.exists(path) and path not in all_icd_search_paths:
+                        all_icd_search_paths.append(path)
+
+        # Must match behavior of
+        # https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.235/docs/LoaderDriverInterface.md#driver-discovery-on-linux
+        # (or a newer version of the same standard)
+
+        # 1.a XDG_CONFIG_HOME or ~/.config if unset
+        add_icd_search_path(os.getenv("XDG_CONFIG_HOME") or os.path.join(os.getenv("HOME"), "/.config"))
+        # 1.b XDG_CONFIG_DIRS
+        add_icd_search_path(os.getenv("XDG_CONFIG_DIRS") or "/etc/xdg")
+
+        # 2, 3 SYSCONFDIR and EXTRASYSCONFDIR
+        # Compiled in default has both the same
+        add_icd_search_path("/etc")
+
+        # 4 XDG_DATA_HOME
+        add_icd_search_path(os.getenv("XDG_DATA_HOME") or (os.path.join(os.getenv("HOME"), ".local/share")))
+
+        # 5 XDG_DATA_DIRS or fall back to /usr/local/share and /usr/share
+        add_icd_search_path(os.getenv("XDG_DATA_DIRS") or "/usr/local/share:/usr/share")
+
+        # FALLBACK
+        # dirs that aren't from the loader spec are searched last
+        for fallback_dir in FALLBACK_VULKAN_DATA_DIRS:
+            add_icd_search_path(fallback_dir)
+
+        all_icd_files = []
+
+        for data_dir in all_icd_search_paths:
+            path = os.path.join(data_dir, "icd.d", "*.json")
+            # sort here as directory enumeration order is not guaranteed in linux
+            # so it's consistent every time
+            icd_files = sorted(glob(path))
+            if icd_files:
+                all_icd_files += icd_files
+
+        return all_icd_files
+
     def __get_vk_icd_loaders(self):
-        loaders = {
-            "nvidia": [],
-            "amd": [],
-            "intel": []
-        }
-
-        for _dir in self.__vk_icd_dirs:
-            _files = glob(f"{_dir}/icd.d/*.json", recursive=True)
-
-            for file in _files:
-                if "nvidia" in file.lower():
-                    # Workaround for nvidia flatpak bug: https://github.com/flathub/org.freedesktop.Platform.GL.nvidia/issues/112
-                    should_skip=False
-                    for nvidia_loader in loaders["nvidia"]:
-                        if filecmp.cmp(nvidia_loader, file):
-                            should_skip=True
-                            continue
-                    if not should_skip:
-                        loaders["nvidia"] += [file]
-                elif "amd" in file.lower() or "radeon" in file.lower():
-                    loaders["amd"] += [file]
-                elif "intel" in file.lower():
-                    loaders["intel"] += [file]
-
+        loaders = defaultdict(list)
+        all_icd_files = self.__get_vk_icd_files()
+    
+        # Add loaders for each vendor
+        for loader in all_icd_files:
+            if "intel" in loader:
+                loaders["intel"].append(loader)
+            elif "radeon" in loader:
+                loaders["amdradv"].append(loader)
+            elif "nvidia" in loader:
+                loaders["nvidia"].append(loader)
+            elif "amd" in loader:
+                if "pro" in loader:
+                    loaders["amdvlkpro"].append(loader)
+                else:
+                    loaders["amdvlk"].append(loader)
+            else:
+                loaders["unknown"].append(loader)
+    
         return loaders
 
     def get_vk_icd(self, vendor: str, as_string=False):
         vendors = [
-            "nvidia",
             "amd",
+            "amdradv",
+            "amdvlk",
+            "amdvlkpro",
+            "nvidia",
             "intel"
+            "unknown"
         ]
         icd = []
 
         if vendor in vendors:
-            icd = self.loaders[vendor]
+            icd = self.loaders.get(vendor, "")
 
-        if as_string:
+        if icd and as_string:
             icd = ":".join(icd)
 
         return icd
