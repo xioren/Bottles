@@ -93,7 +93,7 @@ class BottleParams(DictCompatMixIn):
     custom_dpi: int = 96
     renderer: str = "gl"
     discrete_gpu: bool = False
-    vulkan_icd_loader = "default
+    vulkan_icd_loader = "default"
     virtual_desktop: bool = False
     virtual_desktop_res: str = "1280x720"
     pulseaudio_latency: bool = False
