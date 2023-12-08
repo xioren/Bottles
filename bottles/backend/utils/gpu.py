@@ -43,32 +43,6 @@ class GPUUtils:
     def __init__(self):
         self.vk = VulkanUtils()
 
-    def list_all(self):
-        found = []
-        for _vendor in self.__vendors:
-            _proc = subprocess.Popen(
-                f"lspci | grep '{self.__vendors[_vendor]}'",
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=True
-            )
-            stdout, stderr = _proc.communicate()
-
-            if len(stdout) > 0:
-                found.append(_vendor)
-
-        return found
-
-    @staticmethod
-    def assume_discrete(vendors: list):
-        if "nvidia" in vendors and "amd" in vendors:
-            return {"integrated": "amd", "discrete": "nvidia"}
-        if "nvidia" in vendors and "intel" in vendors:
-            return {"integrated": "intel", "discrete": "nvidia"}
-        if "amd" in vendors and "intel" in vendors:
-            return {"integrated": "intel", "discrete": "amd"}
-        return {}
-
     @staticmethod
     def is_nouveau():
         _proc = subprocess.Popen(
@@ -84,19 +58,20 @@ class GPUUtils:
         return False
 
     def get_gpu(self):
-        checks = {
-            "nvidia": {
-                "query": "(VGA|3D).*NVIDIA"
-            },
-            "amd": {
-                "query": "(VGA|3D).*AMD/ATI"
-            },
-            "intel": {
-                "query": "(VGA|3D).*Intel"
-            }
-        }
+        def extract_vendor(gpu_string):
+            lower_gpu_string = gpu_string.lower()
+            if "nvidia" in lower_gpu_string:
+                return "nvidia"
+            elif "amd" in lower_gpu_string:
+                return "amd"
+            elif "intel" in lower_gpu_string:
+                return "intel"
+            else:
+                return "unknown"
+        
         gpus = {
             "nvidia": {
+                "name": "",
                 "vendor": "nvidia",
                 "envs": {
                     "__NV_PRIME_RENDER_OFFLOAD": "1",
@@ -107,22 +82,32 @@ class GPUUtils:
                 "nvngx_path": get_nvidia_dll_path()
             },
             "amd": {
+                "name": "",
                 "vendor": "amd",
                 "envs": {
                     "DRI_PRIME": "1"
                 },
-                "icd": self.vk.get_vk_icd("amd", as_string=True)
+                # QUESTION: which order do we want to check these?
+                "icd": self.vk.get_vk_icd("amdradv", as_string=True) or self.vk.get_vk_icd("amdvlkpro", as_string=True) or self.vk.get_vk_icd("amdvlk", as_string=True)
             },
             "intel": {
+                "name": "",
                 "vendor": "intel",
                 "envs": {
                     "DRI_PRIME": "1"
                 },
                 "icd": self.vk.get_vk_icd("intel", as_string=True)
             }
+            "unknown": {
+                "name": "unknown",
+                "vendor": "unknown",
+                "envs": {
+                },
+                "icd": self.vk.get_vk_icd("unknown", as_string=True)
+            }
         }
-        found = []
         result = {
+            # NOTE: vendors should be a list. if there are multiple gpu by same vendor, they will overwrite each other.
             "vendors": {},
             "prime": {
                 "integrated": None,
@@ -134,26 +119,20 @@ class GPUUtils:
             gpus["nvidia"]["envs"] = {"DRI_PRIME": "1"}
             gpus["nvidia"]["icd"] = ""
 
-        for _check in checks:
-            _query = checks[_check]["query"]
-            _proc = subprocess.Popen(
-                f"lspci | grep -iP '{_query}'",
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=True
-            )
-            stdout, stderr = _proc.communicate()
-            if len(stdout) > 0:
-                found.append(_check)
-                result["vendors"][_check] = gpus[_check]
-
-        if len(found) >= 2:
-            _discrete = self.assume_discrete(found)
-            if _discrete:
-                _integrated = _discrete["integrated"]
-                _discrete = _discrete["discrete"]
-                result["prime"]["integrated"] = gpus[_integrated]
-                result["prime"]["discrete"] = gpus[_discrete]
+        gpu_name = self.vk.get_vulkan_gpu_name(False)
+        prime_gpu_name = self.vk.get_vulkan_gpu_name(True)
+        gpu_vendor = extract_vendor(gpu_name)
+        prime_gpu_vendor = extract_vendor(prime_gpu_name)
+        gpu = gpus[gpu_vendor]
+        gpu["name"] = gpu_name
+        # TODO: what about same vendor integrated/discrete? they would overwrite each other.
+        if prime_gpu_name and prime_gpu_vendor != gpu_vendor:
+            prime_gpu = gpus[prime_gpu_vendor]
+            prime_gpu["name"] = prime_gpu_name
+            result["vendors"] = prime_gpu
+            result["prime"]["discrete"] = prime_gpu
+            result["prime"]["integrated"] = gpu
+        result["vendors"] = gpu
 
         return result
 
