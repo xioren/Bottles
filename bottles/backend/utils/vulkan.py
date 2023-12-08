@@ -21,6 +21,7 @@ import filecmp
 import subprocess
 
 from glob import glob
+from functools import lru_cache
 from collections import defaultdict
 
 FALLBACK_VULKAN_DATA_DIRS = [
@@ -38,6 +39,49 @@ class VulkanUtils:
     # NOTE: borrows heavily from https://github.com/lutris/lutris/blob/master/lutris/util/system.py
     def __init__(self):
         self.loaders = self.__get_vk_icd_loaders()
+    
+    @lru_cache
+    def get_vulkan_gpu_name(self, icd_files, use_dri_prime):
+        """Runs vulkaninfo to determine the default and DRI_PRIME gpu if available,
+        returns 'Not Found' if the GPU is not found or 'Unknown GPU' if vulkaninfo
+        is not available."""
+
+        def fetch_vulkan_gpu_name(prime):
+            """Runs vulkaninfo to find the primary GPU"""
+            subprocess_env = dict(os.environ)
+            if icd_files:
+                subprocess_env["VK_DRIVER_FILES"] = icd_files
+                subprocess_env["VK_ICD_FILENAMES"] = icd_files
+            # How is prime going to be useful in case
+            # of full AMD setups or AMD + Intel setups?
+            if prime:
+                subprocess_env["DRI_PRIME"] = "1"
+    
+            infocmd = "vulkaninfo --summary | grep deviceName | head -n 1 | tr -s '[:blank:]' | cut -d ' ' -f 3-"
+            with subprocess.Popen(infocmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  env=subprocess_env) as infoget:
+                result = infoget.communicate()[0].decode("utf-8").strip()
+    
+            if "Failed to detect any valid GPUs" in result or "ERROR: [Loader Message]" in result:
+                return "No GPU"
+
+        # Shorten result to just the friendly name of the GPU
+        # vulkaninfo returns Vendor Friendly Name (Chip Developer Name)
+        # AMD Radeon Pro W6800 (RADV NAVI21) -> AMD Radeon Pro W6800
+        return re.sub(r"\s*\(.*?\)", "", result)
+
+    if not shutil.which("vulkaninfo"):
+        logger.warning("vulkaninfo not available, unable to list GPUs")
+        return "Unknown GPU"
+
+    gpu = fetch_vulkan_gpu_name(False)
+
+    if use_dri_prime:
+        prime_gpu = fetch_vulkan_gpu_name(True)
+        if prime_gpu != gpu:
+            gpu += f" (Discrete GPU: {prime_gpu})"
+
+    return gpu or "Not Found"
 
     def __get_vk_icd_files(self):
         all_icd_search_paths = []
