@@ -170,7 +170,7 @@ class WineCommand:
 
         dll_overrides = []
         # NOTE: check user override then fallback to auto selection.
-        gpu = params.user_selected_gpu:
+        gpu = params.user_selected_gpu
         if gpu == "default":
             gpu = GPUUtils().get_gpu()
         is_nvidia = DisplayUtils.check_nvidia_device()
