@@ -97,7 +97,7 @@ class GPUUtils:
                     "DRI_PRIME": "1"
                 },
                 "icd": self.vk.get_vk_icd("intel", as_string=True)
-            }
+            },
             "unknown": {
                 "name": "unknown",
                 "vendor": "unknown",
