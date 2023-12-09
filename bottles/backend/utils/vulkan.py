@@ -70,18 +70,18 @@ class VulkanUtils:
         # AMD Radeon Pro W6800 (RADV NAVI21) -> AMD Radeon Pro W6800
         return re.sub(r"\s*\(.*?\)", "", result)
 
-    if not shutil.which("vulkaninfo"):
-        logger.warning("vulkaninfo not available, unable to list GPUs")
-        return "Unknown GPU"
+        if not shutil.which("vulkaninfo"):
+            logger.warning("vulkaninfo not available, unable to list GPUs")
+            return "Unknown GPU"
 
-    gpu = fetch_vulkan_gpu_name(False)
-
-    if use_dri_prime:
-        prime_gpu = fetch_vulkan_gpu_name(True)
-        if prime_gpu != gpu:
-            gpu += f" (Discrete GPU: {prime_gpu})"
-
-    return gpu or "Not Found"
+        gpu = fetch_vulkan_gpu_name(False)
+    
+        if use_dri_prime:
+            prime_gpu = fetch_vulkan_gpu_name(True)
+            if prime_gpu != gpu:
+                gpu += f" (Discrete GPU: {prime_gpu})"
+    
+        return gpu or "Not Found"
 
     def __get_vk_icd_files(self):
         all_icd_search_paths = []
